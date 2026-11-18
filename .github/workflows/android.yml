@@ -1,3 +1,77 @@
+name: Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'versionName'
+        required: false
+        default: '1.0.0'
+      tests:
+        description: 'Run the unit tests first'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: base
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: "platforms;android-37.0 build-tools;36.0.0"
+
+      - name: Version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="$(printf '%s' "$INPUT_VERSION" | tr -d '[:space:]')"
+          VERSION="${VERSION:-1.0.0}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Signing Key
+        run: |
+          keytool -genkey -v -keystore "$RUNNER_TEMP/release.jks" \
+            -alias aurora -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass 123456 -keypass 123456 \
+            -dname "CN=Aurora, OU=Dev, O=App, L=City, S=State, C=US"
+
+      - name: Signed beta APK
+        env:
+          MYSPOTI_KEYSTORE: ${{ runner.temp }}/release.jks
+          MYSPOTI_KEYSTORE_PASSWORD: "123456"
+          MYSPOTI_KEY_ALIAS: "aurora"
+          MYSPOTI_KEY_PASSWORD: "123456"
+        run: |
+          VERSION='${{ steps.version.outputs.version }}'
+          ./gradlew assembleRelease \
+            -PappBeta=true \
+            -PappVersionName="$VERSION" \
+            -PappVersionCode="$((1000 + GITHUB_RUN_NUMBER))"
+          mv app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/Aurora-$VERSION.apk"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Aurora-${{ steps.version.outputs.version }}
+          path: base/app/build/outputs/apk/release/Aurora-*.apk
+          if-no-files-found: error
+          retention-days: 14
 # Builds the signed beta APK, by hand: Actions > Android > Run workflow. That is the only
 # trigger — nothing runs on a push, no release and no tag is ever created.
 #
